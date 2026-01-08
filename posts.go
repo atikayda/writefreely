@@ -157,6 +157,7 @@ type (
 		IsAdmin         bool
 		CanInvite       bool
 		Silenced        bool
+		LikeCount       int64
 
 		// Helper field for Chorus mode
 		CollAlias string
@@ -1657,6 +1658,7 @@ Are you sure it was ever here?` + shortCodeNoSig,
 		tp.IsPinned = len(*tp.PinnedPosts) > 0 && PostsContains(tp.PinnedPosts, p)
 		tp.Monetization = coll.Monetization
 		tp.Verification = coll.Verification
+		tp.LikeCount, _ = app.db.GetPostLikeCounts(p.ID)
 		if tp.Verification != "" {
 			// Fetch info for fediverse:creator tag
 			ru, err := getRemoteUserFromURL(app, coll.Verification)
