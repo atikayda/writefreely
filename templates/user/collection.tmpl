@@ -55,6 +55,23 @@ textarea.section.norm {
 		</div>
 	</div>
 
+	{{if .MediaServerURL}}
+	<div class="option">
+		<h2>Avatar</h2>
+		<div class="section">
+			<p class="explain">Upload a custom avatar image for your blog.</p>
+			{{if .AvatarURL}}
+			<div style="margin-bottom: 1em;">
+				<img src="{{.AvatarURL}}" alt="Current avatar" style="max-width: 128px; max-height: 128px; border-radius: 50%;" />
+			</div>
+			{{end}}
+			<input type="file" id="avatar-file" accept="image/jpeg,image/png,image/gif,image/webp" />
+			<button type="button" id="upload-avatar" class="btn" style="margin-left: 0.5em;">Upload Avatar</button>
+			<p class="explain" style="margin-top: 0.5em;">Recommended: Square image, at least 256x256 pixels. Max 2MB.</p>
+		</div>
+	</div>
+	{{end}}
+
 	<div class="option">
 		<h2>Publicity</h2>
 		<div class="section">
@@ -314,6 +331,48 @@ if (matchMedia('(pointer:fine)').matches) {
 	cssEditor.setOptions(opt);
 	cssEditor.resize(true);
 }
+
+{{if .MediaServerURL}}
+var avatarBtn = document.getElementById('upload-avatar');
+if (avatarBtn) {
+	avatarBtn.addEventListener('click', function(e) {
+		var fileInput = document.getElementById('avatar-file');
+		if (!fileInput.files.length) {
+			alert('Please select a file');
+			return;
+		}
+		var formData = new FormData();
+		formData.append('file', fileInput.files[0]);
+
+		avatarBtn.disabled = true;
+		avatarBtn.textContent = 'Uploading...';
+
+		fetch('{{.MediaServerURL}}/avatar/{{.Alias}}', {
+			method: 'POST',
+			headers: {
+				'Authorization': '{{.AccessToken}}'
+			},
+			body: formData,
+			credentials: 'include'
+		})
+		.then(function(response) { return response.json(); })
+		.then(function(data) {
+			if (data.url) {
+				location.reload();
+			} else {
+				alert('Upload failed: ' + (data.error_msg || 'Unknown error'));
+				avatarBtn.disabled = false;
+				avatarBtn.textContent = 'Upload Avatar';
+			}
+		})
+		.catch(function(err) {
+			alert('Upload failed: ' + err);
+			avatarBtn.disabled = false;
+			avatarBtn.textContent = 'Upload Avatar';
+		});
+	});
+}
+{{end}}
 </script>
 
 {{template "footer" .}}

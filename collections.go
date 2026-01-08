@@ -337,9 +337,19 @@ func (c *Collection) PersonObject(ids ...int64) *activitystreams.Person {
 	p.Summary = c.Description
 	if p.Name != "" {
 		if av := c.AvatarURL(); av != "" {
+			mediaType := "image/png"
+			if strings.Contains(av, "/media/") || strings.Contains(av, "/avatars/") {
+				if strings.HasSuffix(av, ".jpg") || strings.HasSuffix(av, ".jpeg") {
+					mediaType = "image/jpeg"
+				} else if strings.HasSuffix(av, ".gif") {
+					mediaType = "image/gif"
+				} else if strings.HasSuffix(av, ".webp") {
+					mediaType = "image/webp"
+				}
+			}
 			p.Icon = activitystreams.Image{
 				Type:      "Image",
-				MediaType: "image/png",
+				MediaType: mediaType,
 				URL:       av,
 			}
 		}
@@ -359,6 +369,10 @@ func (c *Collection) PersonObject(ids ...int64) *activitystreams.Person {
 }
 
 func (c *Collection) AvatarURL() string {
+	if customAvatar := c.db.GetCollectionAttribute(c.ID, "avatar_url"); customAvatar != "" {
+		return customAvatar
+	}
+
 	fl := string(unicode.ToLower([]rune(c.DisplayTitle())[0]))
 	if !isAvatarChar(fl) {
 		return ""

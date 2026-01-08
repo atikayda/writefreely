@@ -882,16 +882,24 @@ func viewEditCollection(app *App, u *User, w http.ResponseWriter, r *http.Reques
 		Silenced bool
 
 		config.EmailCfg
-		LetterReplyTo string
+		LetterReplyTo  string
+		MediaServerURL string
+		AvatarURL      string
+		AccessToken    string
 	}{
-		UserPage:   NewUserPage(app, r, u, "Edit "+c.DisplayTitle(), flashes),
-		Collection: c,
-		Silenced:   silenced,
-		EmailCfg:   app.cfg.Email,
+		UserPage:       NewUserPage(app, r, u, "Edit "+c.DisplayTitle(), flashes),
+		Collection:     c,
+		Silenced:       silenced,
+		EmailCfg:       app.cfg.Email,
+		MediaServerURL: app.cfg.App.MediaServerURL,
+		AvatarURL:      c.AvatarURL(),
 	}
 	obj.UserPage.CollAlias = c.Alias
 	if obj.EmailCfg.Enabled() {
 		obj.LetterReplyTo = app.db.GetCollectionAttribute(c.ID, collAttrLetterReplyTo)
+	}
+	if obj.MediaServerURL != "" {
+		obj.AccessToken, _ = app.db.GetAccessToken(u.ID)
 	}
 
 	showUserPage(w, "collection", obj)
