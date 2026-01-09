@@ -406,6 +406,7 @@
 
 		{{if .MediaServerURL}}
 		var mediaServerURL = '{{.MediaServerURL}}';
+		var accessToken = '{{.AccessToken}}';
 		var $uploadBtn = document.getElementById('upload-btn');
 		var $fileInput = document.getElementById('file-input');
 
@@ -434,7 +435,9 @@
 				fetch(mediaServerURL + '/upload', {
 					method: 'POST',
 					body: formData,
-					credentials: 'include'
+					headers: {
+						'Authorization': accessToken
+					}
 				})
 				.then(function(response) {
 					if (!response.ok) {

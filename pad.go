@@ -40,6 +40,7 @@ func handleViewPad(app *App, w http.ResponseWriter, r *http.Request) error {
 		Blogs          *[]Collection
 		Silenced       bool
 		MediaServerURL string
+		AccessToken    string
 
 		Editing        bool        // True if we're modifying an existing post
 		EditCollection *Collection // Collection of the post we're editing, if any
@@ -61,6 +62,9 @@ func handleViewPad(app *App, w http.ResponseWriter, r *http.Request) error {
 				return err
 			}
 			log.Error("Unable to get user status for Pad: %v", err)
+		}
+		if appData.MediaServerURL != "" {
+			appData.AccessToken, _ = app.db.GetAccessToken(appData.User.ID)
 		}
 	}
 
