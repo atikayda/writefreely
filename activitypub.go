@@ -65,13 +65,34 @@ func initActivityPub(app *App) {
 }
 
 type RemoteUser struct {
-	ID          int64
-	ActorID     string
-	Inbox       string
-	SharedInbox string
-	URL         string
-	Handle      string
-	Created     time.Time
+	ID           int64
+	ActorID      string
+	Inbox        string
+	SharedInbox  string
+	URL          string
+	Handle       string
+	DisplayName  string
+	AvatarURL    string
+	AvatarCached string
+	Created      time.Time
+	Updated      time.Time
+}
+
+type RemoteInteraction struct {
+	ID              int64
+	Type            string
+	PostID          string
+	RemoteUserID    int64
+	ActivityID      string
+	ParentID        *int64
+	Level           int
+	ContentMarkdown string
+	ContentHTML     string
+	CWText          string
+	URL             string
+	Created         time.Time
+	Received        time.Time
+	User            *RemoteUser
 }
 
 func (ru *RemoteUser) CreatedFriendly() string {
@@ -358,7 +379,9 @@ func handleFetchCollectionInbox(app *App, w http.ResponseWriter, r *http.Request
 	p := c.PersonObject()
 	var to *url.URL
 	var isFollow, isUnfollow, isLike, isUnlike bool
+	var isReply, isBoost bool
 	var likePostID, unlikePostID string
+	var pendingInteraction *RemoteInteraction
 	fullActor := &activitystreams.Person{}
 	var remoteUser *RemoteUser
 
@@ -459,6 +482,163 @@ func handleFetchCollectionInbox(app *App, w http.ResponseWriter, r *http.Request
 			}
 			return impart.RenderActivityJSON(w, m, http.StatusOK)
 		},
+		CreateCallback: func(cr *streams.Create) error {
+			m["@context"] = []string{activitystreams.Namespace}
+			b, _ := json.Marshal(m)
+			if debugging {
+				log.Info("Create: %s", b)
+			}
+
+			_, createID := cr.GetId()
+			if createID == nil {
+				log.Error("Didn't resolve Create ID")
+				return fmt.Errorf("no ID for Create activity")
+			}
+
+			obj := cr.Raw().GetObject(0)
+			if obj == nil {
+				return fmt.Errorf("no object for Create activity")
+			}
+
+			inReplyTo := obj.GetInReplyToIRI(0)
+			if inReplyTo == nil {
+				return nil
+			}
+
+			postID, err := parsePostIDFromURL(app, inReplyTo)
+			if err != nil {
+				return nil
+			}
+
+			var parentID *int64
+			var level int = 1
+			existingReply, err := app.db.GetInteractionByActivityID(inReplyTo.String())
+			if err == nil && existingReply != nil {
+				parentID = &existingReply.ID
+				level = existingReply.Level + 1
+			}
+
+			var contentHTML, cwText, objectURL string
+			var created time.Time
+
+			if obj.ContentLen() > 0 {
+				contentHTML = obj.GetContentString(0)
+			}
+			if obj.SummaryLen() > 0 {
+				cwText = obj.GetSummaryString(0)
+			}
+			if obj.UrlLen() > 0 {
+				if urlVal := obj.GetUrlAnyURI(0); urlVal != nil {
+					objectURL = urlVal.String()
+				}
+			}
+			if objectURL == "" {
+				objectURL = obj.GetId().String()
+			}
+			if obj.IsPublished() {
+				created = obj.GetPublished()
+			} else {
+				created = time.Now()
+			}
+
+			_, from := cr.GetActor(0)
+			if from == nil {
+				return fmt.Errorf("no actor for Create activity")
+			}
+			fullActor, remoteUser, err = getActor(app, from.String())
+			if err != nil {
+				return err
+			}
+
+			isReply = true
+			pendingInteraction = &RemoteInteraction{
+				Type:            "reply",
+				PostID:          postID,
+				ActivityID:      createID.String(),
+				ParentID:        parentID,
+				Level:           level,
+				ContentMarkdown: HTMLToMarkdown(contentHTML),
+				ContentHTML:     contentHTML,
+				CWText:          cwText,
+				URL:             objectURL,
+				Created:         created,
+				Received:        time.Now(),
+			}
+			return nil
+		},
+		DeleteCallback: func(d *streams.Delete) error {
+			m["@context"] = []string{activitystreams.Namespace}
+			b, _ := json.Marshal(m)
+			if debugging {
+				log.Info("Delete: %s", b)
+			}
+
+			obj := d.Raw().GetObjectIRI(0)
+			if obj != nil {
+				err := app.db.DeleteRemoteInteractionByActivityID(obj.String())
+				if err != nil {
+					log.Error("Couldn't delete interaction for Delete activity: %v", err)
+				} else if debugging {
+					log.Info("Deleted interaction for Delete: %s", obj.String())
+				}
+			}
+			return impart.RenderActivityJSON(w, "", http.StatusOK)
+		},
+		AnnounceCallback: func(an *streams.Announce) error {
+			m["@context"] = []string{activitystreams.Namespace}
+			b, _ := json.Marshal(m)
+			if debugging {
+				log.Info("Announce: %s", b)
+			}
+
+			_, announceID := an.GetId()
+			if announceID == nil {
+				log.Error("Didn't resolve Announce ID")
+				return fmt.Errorf("no ID for Announce activity")
+			}
+
+			obj := an.Raw().GetObjectIRI(0)
+			if obj == nil {
+				return fmt.Errorf("no object IRI for Announce activity")
+			}
+
+			postID, err := parsePostIDFromURL(app, obj)
+			if err != nil {
+				return nil
+			}
+
+			var contentHTML, cwText string
+			if an.Raw().ContentLen() > 0 {
+				contentHTML = an.Raw().GetContentString(0)
+			}
+			if an.Raw().SummaryLen() > 0 {
+				cwText = an.Raw().GetSummaryString(0)
+			}
+
+			_, from := an.GetActor(0)
+			if from == nil {
+				return fmt.Errorf("no actor for Announce activity")
+			}
+			fullActor, remoteUser, err = getActor(app, from.String())
+			if err != nil {
+				return err
+			}
+
+			isBoost = true
+			pendingInteraction = &RemoteInteraction{
+				Type:            "boost",
+				PostID:          postID,
+				ActivityID:      announceID.String(),
+				Level:           1,
+				ContentMarkdown: HTMLToMarkdown(contentHTML),
+				ContentHTML:     contentHTML,
+				CWText:          cwText,
+				URL:             from.String(),
+				Created:         time.Now(),
+				Received:        time.Now(),
+			}
+			return nil
+		},
 		UndoCallback: func(u *streams.Undo) error {
 			m["@context"] = []string{activitystreams.Namespace}
 			b, _ := json.Marshal(m)
@@ -468,7 +648,8 @@ func handleFetchCollectionInbox(app *App, w http.ResponseWriter, r *http.Request
 
 			a.AppendObject(u.Raw())
 
-			// Check type -- we handle Undo:Like and Undo:Follow
+			// Check type -- we handle Undo:Like, Undo:Announce, Undo:Create, and Undo:Follow
+			var undoActivityID string
 			_, err := u.ResolveObject(&streams.Resolver{
 				LikeCallback: func(like *streams.Like) error {
 					isUnlike = true
@@ -488,13 +669,41 @@ func handleFetchCollectionInbox(app *App, w http.ResponseWriter, r *http.Request
 					}
 					return nil
 				},
-				// TODO: add FollowCallback for more robust handling
+				AnnounceCallback: func(an *streams.Announce) error {
+					_, announceID := an.GetId()
+					if announceID != nil {
+						undoActivityID = announceID.String()
+						err := app.db.DeleteRemoteInteractionByActivityID(undoActivityID)
+						if err != nil {
+							log.Error("Couldn't delete interaction for Undo Announce: %v", err)
+						} else if debugging {
+							log.Info("Deleted interaction for Undo Announce: %s", undoActivityID)
+						}
+					}
+					return nil
+				},
+				CreateCallback: func(cr *streams.Create) error {
+					_, createID := cr.GetId()
+					if createID != nil {
+						undoActivityID = createID.String()
+						err := app.db.DeleteRemoteInteractionByActivityID(undoActivityID)
+						if err != nil {
+							log.Error("Couldn't delete interaction for Undo Create: %v", err)
+						} else if debugging {
+							log.Info("Deleted interaction for Undo Create: %s", undoActivityID)
+						}
+					}
+					return nil
+				},
 			}, 0)
 			if err != nil {
 				return err
 			}
 			if isUnlike {
 				return nil
+			}
+			if undoActivityID != "" {
+				return impart.RenderActivityJSON(w, "", http.StatusOK)
 			}
 
 			isUnfollow = true
@@ -602,6 +811,63 @@ func handleFetchCollectionInbox(app *App, w http.ResponseWriter, r *http.Request
 		if debugging {
 			log.Info("Successfully un-liked post %s by remote user %s", unlikePostID, remoteUser.URL)
 		}
+		return impart.RenderActivityJSON(w, "", http.StatusOK)
+	} else if isReply || isBoost {
+		if pendingInteraction == nil {
+			return fmt.Errorf("no pending interaction data")
+		}
+
+		t, err := app.db.Begin()
+		if err != nil {
+			log.Error("Unable to start transaction: %v", err)
+			return fmt.Errorf("unable to start transaction: %v", err)
+		}
+
+		var remoteUserID int64
+		if remoteUser != nil {
+			remoteUserID = remoteUser.ID
+		} else {
+			remoteUserID, err = apAddRemoteUser(app, t, fullActor)
+			if err != nil {
+				t.Rollback()
+				return err
+			}
+		}
+
+		pendingInteraction.RemoteUserID = remoteUserID
+
+		err = app.db.AddRemoteInteraction(pendingInteraction)
+		if err != nil {
+			t.Rollback()
+			if !app.db.isDuplicateKeyErr(err) {
+				log.Error("Couldn't add interaction in DB: %v\n", err)
+				return fmt.Errorf("couldn't add interaction in DB: %v", err)
+			}
+			log.Info("Duplicate interaction, ignoring")
+			return impart.RenderActivityJSON(w, "", http.StatusOK)
+		}
+
+		err = t.Commit()
+		if err != nil {
+			t.Rollback()
+			log.Error("Rolling back after Commit(): %v\n", err)
+			return fmt.Errorf("rolling back after Commit(): %v", err)
+		}
+
+		if debugging {
+			log.Info("Successfully stored %s for post %s by remote user %s", pendingInteraction.Type, pendingInteraction.PostID, remoteUser.URL)
+		}
+
+		if fullActor != nil && remoteUserID > 0 {
+			go func() {
+				displayName := fullActor.Name
+				avatarURL := fullActor.Icon.URL
+				if err := app.updateRemoteUserAvatar(remoteUserID, displayName, avatarURL); err != nil {
+					log.Error("Failed to update remote user avatar: %v", err)
+				}
+			}()
+		}
+
 		return impart.RenderActivityJSON(w, "", http.StatusOK)
 	}
 

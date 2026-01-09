@@ -65,7 +65,15 @@
 		{{if .Silenced}}
 			{{template "user-silenced"}}
 		{{end}}
-		<article id="post-body" class="{{.Font}} h-entry {{if not .IsFound}}error-page{{end}}">{{if .IsScheduled}}<p class="badge">Scheduled</p>{{end}}{{if .Title.String}}<h2 id="title" class="p-name{{if and $.Collection.Format.ShowDates (not .IsPinned)}} dated{{end}}">{{.FormattedDisplayTitle}}</h2>{{end}}<div class="post-byline" style="margin:0.75rem 0 0.5rem 0;"><a href="{{if .IsTopLevel}}/{{else}}/{{.Collection.Alias}}/{{end}}" class="byline-author" style="display:inline-flex;align-items:center;gap:0.5rem;text-decoration:none;color:#666;font-size:0.9rem;"><img class="byline-avatar" src="{{.Collection.AvatarURL}}" alt="" style="width:28px;height:28px;border-radius:50%;object-fit:cover;" onerror="this.src='/img/avatars/default.png';this.onerror=null;" /><span>{{.Collection.DisplayTitle}}</span></a></div>{{if and $.Collection.Format.ShowDates (not .IsPinned) .IsFound}}<time class="dt-published" datetime="{{.Created8601}}" pubdate itemprop="datePublished" content="{{.Created}}">{{.DisplayDate}}</time>{{end}}<div class="e-content">{{.HTMLContent}}</div>{{if gt .LikeCount 0}}<div class="post-likes" style="margin-top:1.5rem;padding-top:1rem;border-top:1px solid #ddd;color:#666;font-size:0.9rem;">{{.LikeCount}} {{if eq .LikeCount 1}}like{{else}}likes{{end}} from the fediverse</div>{{end}}</article>
+		<article id="post-body" class="{{.Font}} h-entry {{if not .IsFound}}error-page{{end}}">{{if .IsScheduled}}<p class="badge">Scheduled</p>{{end}}{{if .Title.String}}<h2 id="title" class="p-name{{if and $.Collection.Format.ShowDates (not .IsPinned)}} dated{{end}}">{{.FormattedDisplayTitle}}</h2>{{end}}<div class="post-byline" style="margin:0.75rem 0 0.5rem 0;"><a href="{{if .IsTopLevel}}/{{else}}/{{.Collection.Alias}}/{{end}}" class="byline-author" style="display:inline-flex;align-items:center;gap:0.5rem;text-decoration:none;color:#666;font-size:0.9rem;"><img class="byline-avatar" src="{{.Collection.AvatarURL}}" alt="" style="width:28px;height:28px;border-radius:50%;object-fit:cover;" onerror="this.src='/img/avatars/default.png';this.onerror=null;" /><span>{{.Collection.DisplayTitle}}</span></a></div>{{if and $.Collection.Format.ShowDates (not .IsPinned) .IsFound}}<time class="dt-published" datetime="{{.Created8601}}" pubdate itemprop="datePublished" content="{{.Created}}">{{.DisplayDate}}</time>{{end}}<div class="e-content">{{.HTMLContent}}</div>{{if or (gt .LikeCount 0) (gt .ReplyCount 0) (gt .BoostCount 0)}}<div class="post-interactions" data-post-id="{{.ID}}" style="margin-top:1.5rem;padding-top:1rem;border-top:1px solid #ddd;color:#666;font-size:0.9rem;">
+<div class="interaction-counts" style="display:flex;gap:1rem;flex-wrap:wrap;align-items:center;">
+{{if gt .LikeCount 0}}<span>{{.LikeCount}} {{if eq .LikeCount 1}}like{{else}}likes{{end}}</span>{{end}}
+{{if gt .BoostCount 0}}<span>{{.BoostCount}} {{if eq .BoostCount 1}}boost{{else}}boosts{{end}}</span>{{end}}
+{{if gt .ReplyCount 0}}<span>{{.ReplyCount}} {{if eq .ReplyCount 1}}reply{{else}}replies{{end}}</span>{{end}}
+{{if or (gt .ReplyCount 0) (gt .BoostCount 0)}}<button onclick="loadInteractions('{{.ID}}')" class="load-interactions-btn" style="background:none;border:1px solid #999;border-radius:4px;padding:0.25rem 0.5rem;cursor:pointer;font-size:0.85rem;">Show</button>{{end}}
+</div>
+<div class="interactions-content" style="display:none;margin-top:1rem;"></div>
+</div>{{end}}</article>
 
 		{{ if .Collection.ShowFooterBranding }}
 		<footer dir="ltr"><hr><nav><p style="font-size: 0.9em">{{localhtml "published with write.as" .Language.String}}</p></nav></footer>
@@ -133,6 +141,97 @@ function unpinPost(e, postID) {
 		s.parentNode.insertBefore(wf, s);
 	  })();
 	} catch (e) { /* ¯\_(ツ)_/¯ */ }
+
+function loadInteractions(postID) {
+	var container = document.querySelector('.post-interactions[data-post-id="' + postID + '"]');
+	var btn = container.querySelector('.load-interactions-btn');
+	var content = container.querySelector('.interactions-content');
+
+	btn.disabled = true;
+	btn.textContent = 'Loading...';
+
+	fetch('/api/posts/' + postID + '/interactions')
+		.then(function(r) { return r.json(); })
+		.then(function(data) {
+			var html = '';
+
+			if (data.boosts && data.boosts.length > 0) {
+				html += '<div class="boosts-section"><h4 style="margin:0 0 0.5rem 0;font-size:0.9rem;color:#666;">Boosts</h4>';
+				data.boosts.forEach(function(b) {
+					html += renderInteraction(b, 'boost');
+				});
+				html += '</div>';
+			}
+
+			if (data.replies && data.replies.length > 0) {
+				html += '<div class="replies-section" style="margin-top:1rem;"><h4 style="margin:0 0 0.5rem 0;font-size:0.9rem;color:#666;">Replies</h4>';
+				data.replies.forEach(function(r) {
+					html += renderInteraction(r, 'reply');
+				});
+				html += '</div>';
+			}
+
+			content.innerHTML = html;
+			content.style.display = 'block';
+			btn.style.display = 'none';
+		})
+		.catch(function(e) {
+			btn.disabled = false;
+			btn.textContent = 'Show';
+			console.error('Failed to load interactions:', e);
+		});
+}
+
+function renderInteraction(item, type) {
+	var levelIndent = type === 'reply' ? ((item.level - 1) * 1.5) : 0;
+	var html = '<div class="interaction ' + type + '" style="margin-left:' + levelIndent + 'rem;padding:0.75rem;margin-bottom:0.5rem;background:#f9f9f9;border-radius:4px;font-size:0.9rem;">';
+
+	if (item.user) {
+		html += '<div class="interaction-user" style="display:flex;align-items:center;gap:0.5rem;margin-bottom:0.5rem;">';
+		if (item.user.avatar_url) {
+			html += '<img src="' + escapeHtml(item.user.avatar_url) + '" alt="" style="width:24px;height:24px;border-radius:50%;" onerror="this.style.display=\'none\'" />';
+		}
+		html += '<a href="' + escapeHtml(item.url) + '" target="_blank" rel="noopener" style="color:#333;text-decoration:none;">';
+		html += '<strong>' + escapeHtml(item.user.display_name || item.user.handle) + '</strong>';
+		html += ' <span style="color:#666;">@' + escapeHtml(item.user.handle) + '</span>';
+		html += '</a></div>';
+	}
+
+	if (item.cw_text) {
+		html += '<div class="cw-banner" onclick="revealCW(this)" style="cursor:pointer;padding:0.5rem;background:#fff3cd;border-radius:4px;margin-bottom:0.5rem;">';
+		html += '<span style="font-weight:bold;">CW:</span> ' + escapeHtml(item.cw_text);
+		html += ' <span style="color:#666;font-size:0.85rem;">(click to reveal)</span></div>';
+		html += '<div class="interaction-content" style="display:none;">';
+	} else {
+		html += '<div class="interaction-content">';
+	}
+
+	if (item.content_html) {
+		html += item.content_html;
+	}
+	html += '</div>';
+
+	html += '<div style="margin-top:0.5rem;font-size:0.8rem;color:#999;">';
+	html += '<a href="' + escapeHtml(item.url) + '" target="_blank" rel="noopener" style="color:#999;">' + new Date(item.created).toLocaleDateString() + '</a>';
+	html += '</div></div>';
+
+	return html;
+}
+
+function revealCW(banner) {
+	var content = banner.nextElementSibling;
+	if (content) {
+		content.style.display = 'block';
+		banner.style.display = 'none';
+	}
+}
+
+function escapeHtml(str) {
+	if (!str) return '';
+	var div = document.createElement('div');
+	div.textContent = str;
+	return div.innerHTML;
+}
 	</script>
 
     {{if and .Monetization (not .IsOwner)}}

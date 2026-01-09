@@ -61,6 +61,7 @@
 			<div id="belt">
 				{{if .Editing}}<div class="tool hidden if-room"><a href="{{if .EditCollection}}{{.EditCollection.CanonicalURL}}{{.Post.Slug}}/edit/meta{{else}}/{{if .SingleUser}}d/{{end}}{{.Post.Id}}/meta{{end}}" title="Edit post metadata" id="edit-meta"><img class="ic-24dp" src="/img/ic_info_dark@2x.png" /></a></div>{{end}}
 				<div class="tool hidden if-room room-2"><a href="#theme" title="Toggle theme" id="toggle-theme"><img class="ic-24dp" src="/img/ic_brightness_dark@2x.png" /></a></div>
+				{{if .MediaServerURL}}<div class="tool if-room room-2"><a href="#upload" title="Upload image" id="upload-btn"><i class="material-icons md-24">image</i></a><input type="file" id="file-input" accept="image/*" style="display:none" /></div>{{end}}
 				<div class="tool if-room room-1"><a href="{{if not .User}}/pad/posts{{else}}/me/posts/{{end}}" title="View posts" id="view-posts"><img class="ic-24dp" src="/img/ic_list_dark@2x.png" /></a></div>
 				<div class="tool"><a href="#publish" title="Publish" id="publish"><img class="ic-24dp" src="/img/ic_send_dark@2x.png" /></a></div>
 			</div>
@@ -402,6 +403,83 @@
 				doneTyping();
 			}
 		});
+
+		{{if .MediaServerURL}}
+		var mediaServerURL = '{{.MediaServerURL}}';
+		var $uploadBtn = document.getElementById('upload-btn');
+		var $fileInput = document.getElementById('file-input');
+
+		if ($uploadBtn && $fileInput) {
+			$uploadBtn.addEventListener('click', function(e) {
+				e.preventDefault();
+				$fileInput.click();
+			});
+
+			$fileInput.addEventListener('change', function(e) {
+				var file = e.target.files[0];
+				if (!file) return;
+
+				if (!file.type.startsWith('image/')) {
+					alert('Please select an image file.');
+					return;
+				}
+
+				var originalIcon = $uploadBtn.innerHTML;
+				$uploadBtn.innerHTML = '<i class="material-icons md-24">hourglass_empty</i>';
+				$uploadBtn.style.pointerEvents = 'none';
+
+				var formData = new FormData();
+				formData.append('file', file);
+
+				fetch(mediaServerURL + '/upload', {
+					method: 'POST',
+					body: formData,
+					credentials: 'include'
+				})
+				.then(function(response) {
+					if (!response.ok) {
+						return response.json().then(function(err) {
+							throw new Error(err.error_msg || 'Upload failed');
+						});
+					}
+					return response.json();
+				})
+				.then(function(data) {
+					var markdown = '![' + (file.name || 'image') + '](' + data.url + ')';
+					insertAtCursor($writer.el, markdown);
+					setButtonStates();
+					doneTyping();
+				})
+				.catch(function(err) {
+					alert('Upload failed: ' + err.message);
+				})
+				.finally(function() {
+					$uploadBtn.innerHTML = originalIcon;
+					$uploadBtn.style.pointerEvents = '';
+					$fileInput.value = '';
+				});
+			});
+		}
+
+		function insertAtCursor(textarea, text) {
+			var start = textarea.selectionStart;
+			var end = textarea.selectionEnd;
+			var before = textarea.value.substring(0, start);
+			var after = textarea.value.substring(end);
+
+			var needsNewlineBefore = before.length > 0 && !before.endsWith('\n') && !before.endsWith('\n\n');
+			var needsNewlineAfter = after.length > 0 && !after.startsWith('\n');
+
+			var insertion = (needsNewlineBefore ? '\n\n' : '') + text + (needsNewlineAfter ? '\n\n' : '');
+
+			textarea.value = before + insertion + after;
+			textarea.selectionStart = textarea.selectionEnd = start + insertion.length;
+			textarea.focus();
+
+			var event = new Event('input', { bubbles: true });
+			textarea.dispatchEvent(event);
+		}
+		{{end}}
 
 		try {
 		  (function() {

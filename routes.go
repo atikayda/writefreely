@@ -166,6 +166,7 @@ func InitRoutes(apper Apper, r *mux.Router) *mux.Router {
 	posts.HandleFunc("/{post:[a-zA-Z0-9]+}", handler.All(existingPost)).Methods("POST", "PUT")
 	posts.HandleFunc("/{post:[a-zA-Z0-9]+}", handler.All(deletePost)).Methods("DELETE")
 	posts.HandleFunc("/{post:[a-zA-Z0-9]+}/{property}", handler.AllReader(fetchPostProperty)).Methods("GET")
+	posts.HandleFunc("/{post:[a-zA-Z0-9]+}/interactions", handler.AllReader(fetchPostInteractions)).Methods("GET")
 
 	write.HandleFunc("/auth/signup", handler.Web(handleWebSignup, UserLevelNoneRequired)).Methods("POST")
 	write.HandleFunc("/auth/login", handler.Web(webLogin, UserLevelNoneRequired)).Methods("POST")

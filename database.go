@@ -118,6 +118,15 @@ type writestore interface {
 	ClaimPosts(cfg *config.Config, userID int64, collAlias string, posts *[]ClaimPostRequest) (*[]ClaimPostResult, error)
 
 	GetPostLikeCounts(postID string) (int64, error)
+	GetPostInteractionCounts(postID string) (replies int64, boosts int64, err error)
+	AddRemoteInteraction(i *RemoteInteraction) error
+	GetPostInteractions(postID string, interactionType string, maxLevel int) ([]RemoteInteraction, error)
+	DeleteRemoteInteractionByActivityID(activityID string) error
+	GetInteractionByID(id int64) (*RemoteInteraction, error)
+	GetInteractionByActivityID(activityID string) (*RemoteInteraction, error)
+	UpdateRemoteUserProfile(userID int64, displayName, avatarURL string) error
+	UpdateRemoteUserAvatarCached(userID int64, cachedPath string) error
+	GetRemoteUserWithAvatar(userID int64) (*RemoteUser, error)
 	GetPostsCount(c *CollectionObj, includeFuture bool) error
 	GetPosts(cfg *config.Config, c *Collection, page int, includeFuture, forceRecentFirst, includePinned bool, contentType PostType) (*[]PublicPost, error)
 	GetAllPostsTaggedIDs(c *Collection, tag string, includeFuture bool) ([]string, error)
@@ -1271,6 +1280,151 @@ func (db *datastore) GetPostLikeCounts(postID string) (int64, error) {
 		return 0, err
 	}
 	return count, nil
+}
+
+func (db *datastore) GetPostInteractionCounts(postID string) (replies int64, boosts int64, err error) {
+	err = db.QueryRow("SELECT COUNT(*) FROM remote_interactions WHERE post_id = ? AND type = 'reply'", postID).Scan(&replies)
+	if err != nil && err != sql.ErrNoRows {
+		return 0, 0, err
+	}
+	err = db.QueryRow("SELECT COUNT(*) FROM remote_interactions WHERE post_id = ? AND type = 'boost'", postID).Scan(&boosts)
+	if err != nil && err != sql.ErrNoRows {
+		return replies, 0, err
+	}
+	return replies, boosts, nil
+}
+
+func (db *datastore) AddRemoteInteraction(i *RemoteInteraction) error {
+	_, err := db.Exec(`INSERT INTO remote_interactions (type, post_id, remote_user_id, activity_id, parent_id, level, content_markdown, content_html, cw_text, url, created, received) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		i.Type, i.PostID, i.RemoteUserID, i.ActivityID, i.ParentID, i.Level, i.ContentMarkdown, i.ContentHTML, i.CWText, i.URL, i.Created, i.Received)
+	return err
+}
+
+func (db *datastore) GetPostInteractions(postID string, interactionType string, maxLevel int) ([]RemoteInteraction, error) {
+	var rows *sql.Rows
+	var err error
+
+	if interactionType != "" {
+		rows, err = db.Query(`SELECT i.id, i.type, i.post_id, i.remote_user_id, i.activity_id, i.parent_id, i.level, i.content_markdown, i.content_html, i.cw_text, i.url, i.created, i.received, u.actor_id, u.handle, u.display_name, u.avatar_url, u.avatar_cached FROM remote_interactions i LEFT JOIN remoteusers u ON i.remote_user_id = u.id WHERE i.post_id = ? AND i.type = ? AND i.level <= ? ORDER BY i.created ASC`, postID, interactionType, maxLevel)
+	} else {
+		rows, err = db.Query(`SELECT i.id, i.type, i.post_id, i.remote_user_id, i.activity_id, i.parent_id, i.level, i.content_markdown, i.content_html, i.cw_text, i.url, i.created, i.received, u.actor_id, u.handle, u.display_name, u.avatar_url, u.avatar_cached FROM remote_interactions i LEFT JOIN remoteusers u ON i.remote_user_id = u.id WHERE i.post_id = ? AND i.level <= ? ORDER BY i.created ASC`, postID, maxLevel)
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var interactions []RemoteInteraction
+	for rows.Next() {
+		var i RemoteInteraction
+		var parentID sql.NullInt64
+		var contentMD, contentHTML, cwText sql.NullString
+		var actorID, handle, displayName, avatarURL, avatarCached sql.NullString
+
+		err = rows.Scan(&i.ID, &i.Type, &i.PostID, &i.RemoteUserID, &i.ActivityID, &parentID, &i.Level, &contentMD, &contentHTML, &cwText, &i.URL, &i.Created, &i.Received, &actorID, &handle, &displayName, &avatarURL, &avatarCached)
+		if err != nil {
+			return nil, err
+		}
+
+		if parentID.Valid {
+			i.ParentID = &parentID.Int64
+		}
+		i.ContentMarkdown = contentMD.String
+		i.ContentHTML = contentHTML.String
+		i.CWText = cwText.String
+
+		if actorID.Valid {
+			i.User = &RemoteUser{
+				ID:           i.RemoteUserID,
+				ActorID:      actorID.String,
+				Handle:       handle.String,
+				DisplayName:  displayName.String,
+				AvatarURL:    avatarURL.String,
+				AvatarCached: avatarCached.String,
+			}
+		}
+
+		interactions = append(interactions, i)
+	}
+
+	return interactions, nil
+}
+
+func (db *datastore) DeleteRemoteInteractionByActivityID(activityID string) error {
+	_, err := db.Exec("DELETE FROM remote_interactions WHERE activity_id = ?", activityID)
+	return err
+}
+
+func (db *datastore) GetInteractionByID(id int64) (*RemoteInteraction, error) {
+	var i RemoteInteraction
+	var parentID sql.NullInt64
+	var contentMD, contentHTML, cwText sql.NullString
+
+	err := db.QueryRow(`SELECT id, type, post_id, remote_user_id, activity_id, parent_id, level, content_markdown, content_html, cw_text, url, created, received FROM remote_interactions WHERE id = ?`, id).Scan(&i.ID, &i.Type, &i.PostID, &i.RemoteUserID, &i.ActivityID, &parentID, &i.Level, &contentMD, &contentHTML, &cwText, &i.URL, &i.Created, &i.Received)
+	if err != nil {
+		return nil, err
+	}
+
+	if parentID.Valid {
+		i.ParentID = &parentID.Int64
+	}
+	i.ContentMarkdown = contentMD.String
+	i.ContentHTML = contentHTML.String
+	i.CWText = cwText.String
+
+	return &i, nil
+}
+
+func (db *datastore) GetInteractionByActivityID(activityID string) (*RemoteInteraction, error) {
+	var i RemoteInteraction
+	var parentID sql.NullInt64
+	var contentMD, contentHTML, cwText sql.NullString
+
+	err := db.QueryRow(`SELECT id, type, post_id, remote_user_id, activity_id, parent_id, level, content_markdown, content_html, cw_text, url, created, received FROM remote_interactions WHERE activity_id = ?`, activityID).Scan(&i.ID, &i.Type, &i.PostID, &i.RemoteUserID, &i.ActivityID, &parentID, &i.Level, &contentMD, &contentHTML, &cwText, &i.URL, &i.Created, &i.Received)
+	if err != nil {
+		return nil, err
+	}
+
+	if parentID.Valid {
+		i.ParentID = &parentID.Int64
+	}
+	i.ContentMarkdown = contentMD.String
+	i.ContentHTML = contentHTML.String
+	i.CWText = cwText.String
+
+	return &i, nil
+}
+
+func (db *datastore) UpdateRemoteUserProfile(userID int64, displayName, avatarURL string) error {
+	_, err := db.Exec("UPDATE remoteusers SET display_name = ?, avatar_url = ?, updated = "+db.now()+" WHERE id = ?", displayName, avatarURL, userID)
+	return err
+}
+
+func (db *datastore) UpdateRemoteUserAvatarCached(userID int64, cachedPath string) error {
+	_, err := db.Exec("UPDATE remoteusers SET avatar_cached = ?, updated = "+db.now()+" WHERE id = ?", cachedPath, userID)
+	return err
+}
+
+func (db *datastore) GetRemoteUserWithAvatar(userID int64) (*RemoteUser, error) {
+	var u RemoteUser
+	var urlVal, handle, displayName, avatarURL, avatarCached sql.NullString
+	var updated sql.NullTime
+
+	err := db.QueryRow("SELECT id, actor_id, inbox, shared_inbox, url, handle, display_name, avatar_url, avatar_cached, updated FROM remoteusers WHERE id = ?", userID).Scan(&u.ID, &u.ActorID, &u.Inbox, &u.SharedInbox, &urlVal, &handle, &displayName, &avatarURL, &avatarCached, &updated)
+	if err != nil {
+		return nil, err
+	}
+
+	u.URL = urlVal.String
+	u.Handle = handle.String
+	u.DisplayName = displayName.String
+	u.AvatarURL = avatarURL.String
+	u.AvatarCached = avatarCached.String
+	if updated.Valid {
+		u.Updated = updated.Time
+	}
+
+	return &u, nil
 }
 
 // GetPostsCount modifies the CollectionObj to include the correct number of

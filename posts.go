@@ -18,6 +18,7 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -158,6 +159,8 @@ type (
 		CanInvite       bool
 		Silenced        bool
 		LikeCount       int64
+		ReplyCount      int64
+		BoostCount      int64
 
 		// Helper field for Chorus mode
 		CollAlias string
@@ -1194,6 +1197,81 @@ func fetchPostProperty(app *App, w http.ResponseWriter, r *http.Request) error {
 	return impart.WriteSuccess(w, p, http.StatusOK)
 }
 
+type InteractionResponse struct {
+	Replies []InteractionData `json:"replies"`
+	Boosts  []InteractionData `json:"boosts"`
+}
+
+type InteractionData struct {
+	ID              int64           `json:"id"`
+	Level           int             `json:"level,omitempty"`
+	ParentID        *int64          `json:"parent_id,omitempty"`
+	ContentHTML     string          `json:"content_html,omitempty"`
+	ContentMarkdown string          `json:"content_markdown,omitempty"`
+	CWText          string          `json:"cw_text,omitempty"`
+	URL             string          `json:"url"`
+	Created         string          `json:"created"`
+	User            *InteractionUser `json:"user,omitempty"`
+}
+
+type InteractionUser struct {
+	Handle      string `json:"handle"`
+	DisplayName string `json:"display_name,omitempty"`
+	AvatarURL   string `json:"avatar_url,omitempty"`
+}
+
+func fetchPostInteractions(app *App, w http.ResponseWriter, r *http.Request) error {
+	vars := mux.Vars(r)
+	postID := vars["post"]
+
+	maxLevel := 3
+	if ml := r.URL.Query().Get("max_level"); ml != "" {
+		if parsed, err := strconv.Atoi(ml); err == nil && parsed > 0 && parsed <= 10 {
+			maxLevel = parsed
+		}
+	}
+
+	interactionType := r.URL.Query().Get("type")
+
+	interactions, err := app.db.GetPostInteractions(postID, interactionType, maxLevel)
+	if err != nil {
+		return err
+	}
+
+	response := InteractionResponse{
+		Replies: []InteractionData{},
+		Boosts:  []InteractionData{},
+	}
+
+	for _, i := range interactions {
+		data := InteractionData{
+			ID:              i.ID,
+			Level:           i.Level,
+			ParentID:        i.ParentID,
+			ContentHTML:     i.ContentHTML,
+			ContentMarkdown: i.ContentMarkdown,
+			CWText:          i.CWText,
+			URL:             i.URL,
+			Created:         i.Created.Format(time.RFC3339),
+		}
+		if i.User != nil {
+			data.User = &InteractionUser{
+				Handle:      i.User.EstimatedHandle(),
+				DisplayName: i.User.DisplayName,
+				AvatarURL:   i.User.AvatarURL,
+			}
+		}
+
+		if i.Type == "reply" {
+			response.Replies = append(response.Replies, data)
+		} else if i.Type == "boost" {
+			response.Boosts = append(response.Boosts, data)
+		}
+	}
+
+	return impart.WriteSuccess(w, response, http.StatusOK)
+}
+
 func (p *Post) processPost() PublicPost {
 	res := &PublicPost{Post: p, Views: 0}
 	res.Views = p.ViewCount
@@ -1659,6 +1737,7 @@ Are you sure it was ever here?` + shortCodeNoSig,
 		tp.Monetization = coll.Monetization
 		tp.Verification = coll.Verification
 		tp.LikeCount, _ = app.db.GetPostLikeCounts(p.ID)
+		tp.ReplyCount, tp.BoostCount, _ = app.db.GetPostInteractionCounts(p.ID)
 		if tp.Verification != "" {
 			// Fetch info for fediverse:creator tag
 			ru, err := getRemoteUserFromURL(app, coll.Verification)

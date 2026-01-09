@@ -58,7 +58,9 @@ require github.com/xhit/go-simple-mail/v2 v2.16.0
 require (
 	code.as/core/socks v1.0.0 // indirect
 	filippo.io/edwards25519 v1.1.0 // indirect
-	github.com/andybalholm/cascadia v1.3.2 // indirect
+	github.com/JohannesKaufmann/dom v0.2.0 // indirect
+	github.com/JohannesKaufmann/html-to-markdown/v2 v2.5.0 // indirect
+	github.com/andybalholm/cascadia v1.3.3 // indirect
 	github.com/beevik/etree v1.1.0 // indirect
 	github.com/captncraig/cors v0.0.0-20190703115713-e80254a89df1 // indirect
 	github.com/chzyer/readline v0.0.0-20180603132655-2972be24d48e // indirect

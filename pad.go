@@ -35,17 +35,19 @@ func handleViewPad(app *App, w http.ResponseWriter, r *http.Request) error {
 	}
 	appData := &struct {
 		page.StaticPage
-		Post     *RawPost
-		User     *User
-		Blogs    *[]Collection
-		Silenced bool
+		Post           *RawPost
+		User           *User
+		Blogs          *[]Collection
+		Silenced       bool
+		MediaServerURL string
 
 		Editing        bool        // True if we're modifying an existing post
 		EditCollection *Collection // Collection of the post we're editing, if any
 	}{
-		StaticPage: pageForReq(app, r),
-		Post:       &RawPost{Font: "norm"},
-		User:       getUserSession(app, r),
+		StaticPage:     pageForReq(app, r),
+		Post:           &RawPost{Font: "norm"},
+		User:           getUserSession(app, r),
+		MediaServerURL: app.cfg.App.MediaServerURL,
 	}
 	var err error
 	if appData.User != nil {

@@ -121,10 +121,11 @@ type (
 
 	// AppCfg holds values that affect how the application functions
 	AppCfg struct {
-		SiteName       string `ini:"site_name"`
-		SiteDesc       string `ini:"site_description"`
-		Host           string `ini:"host"`
-		MediaServerURL string `ini:"media_server_url"`
+		SiteName            string `ini:"site_name"`
+		SiteDesc            string `ini:"site_description"`
+		Host                string `ini:"host"`
+		MediaServerURL      string `ini:"media_server_url"`
+		MediaServerAPIKey   string `ini:"media_server_api_key"`
 
 		// Site appearance
 		Theme      string `ini:"theme"`
